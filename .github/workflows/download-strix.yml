@@ -1,0 +1,57 @@
+
+name: Download Strix Sandbox to Releases
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h
+
+      - name: Pull and export Strix Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/usestrix/strix-sandbox:1.3.0"
+          prefix="strix-sandbox-1.3.0-amd64.tar.gz"
+
+          docker pull --platform linux/amd64 "$image"
+          docker image save "$image" | gzip -1 | split -b 1500M -d -a 3 - "${prefix}.part"
+
+          parts=( "${prefix}".part* )
+          if (( ${#parts[@]} == 1 )); then
+            mv "${parts[0]}" "$prefix"
+            sha256sum "$prefix" > SHA256SUMS.txt
+          else
+            checksum="$(cat "${parts[@]}" | sha256sum | awk '{print $1}')"
+            printf '%s  %s\n' "$checksum" "$prefix" > SHA256SUMS.txt
+          fi
+
+          ls -lh "${prefix}"* SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish download files to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "strix-sandbox-1.3.0-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}" \
+            strix-sandbox-1.3.0-amd64.tar.gz* SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Strix Sandbox 1.3.0 (linux/amd64)" \
+            --notes "Docker image exported with docker save and gzip. Download all parts if split, then combine in ascending order. SHA256SUMS.txt contains the hash of the reassembled .tar.gz archive."
